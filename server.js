@@ -145,7 +145,7 @@ app.post('/api/submit', upload.any(), async (req, res) => {
     await transporter.sendMail({
       from: `"96Kickz" <${SMTP_USER}>`,
       to: email,
-      subject: `We received your submission — 96Kickz`,
+      subject: `We received your submission â€” 96Kickz`,
       html: `
         <p>Thanks ${name},</p>
         <p>We received your submission and will review your pairs within 24 hours.</p>

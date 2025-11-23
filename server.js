@@ -4,10 +4,7 @@
 const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
-
-// If you are using nodemailer for emails, uncomment these lines
-// const nodemailer = require('nodemailer');
-// require('dotenv').config();
+const nodemailer = require('nodemailer');
 
 // 2) Create app
 const app = express();
@@ -19,19 +16,41 @@ app.use(express.urlencoded({ extended: true }));
 
 // 4) Multer setup for file uploads (photos)
 const upload = multer({
-  storage: multer.memoryStorage(), // keep files in memory (good for emailing / forwarding)
+  storage: multer.memoryStorage(), // keep files in memory (for emailing)
   limits: {
     fileSize: 10 * 1024 * 1024, // 10 MB per file
     files: 10,                  // max 10 images
   },
 });
 
-// 5) Test route (optional – can help debug on Render)
+// 5) Nodemailer transporter (using Render env vars)
+let transporter = null;
+
+if (
+  process.env.SMTP_HOST &&
+  process.env.SMTP_PORT &&
+  process.env.SMTP_USER &&
+  process.env.SMTP_PASS
+) {
+  transporter = nodemailer.createTransport({
+    host: process.env.SMTP_HOST,
+    port: Number(process.env.SMTP_PORT),
+    secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for 587/25 etc
+    auth: {
+      user: process.env.SMTP_USER,
+      pass: process.env.SMTP_PASS,
+    },
+  });
+} else {
+  console.warn('⚠️ SMTP env vars not fully set. Emails will NOT be sent.');
+}
+
+// 6) Test route
 app.get('/', (req, res) => {
   res.send('96Kickz Sell-To-Us backend is running.');
 });
 
-// 6) Main POST route for the Sell To Us form
+// 7) Main POST route for Sell To Us form
 app.post('/api/submit', upload.array('photos'), async (req, res) => {
   console.log('📩 Received /api/submit');
 
@@ -65,9 +84,123 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
 
     console.log('Parsed pairs:', pairs);
 
-    // TODO: put your email / storage logic here.
-    // For now we just log and return success so you can verify it's wired up.
+    // Build email body
+    const toEmail = process.env.TO_EMAIL || 'buys@96kickz.com';
+    const fromEmail =
+      process.env.FROM_EMAIL || process.env.SMTP_USER || 'no-reply@96kickz.com';
 
+    const pairsHtml = pairs
+      .map(
+        (p) => `
+          <tr>
+            <td>${p.index || ''}</td>
+            <td>${p.brand_model || ''}</td>
+            <td>${p.size_us || ''}</td>
+            <td>${p.condition || ''}</td>
+            <td>${p.desired_price || ''}</td>
+            <td>${p.has_box || ''}</td>
+            <td>${p.notes || ''}</td>
+          </tr>
+        `
+      )
+      .join('');
+
+    const htmlBody = `
+      <h2>New Sell-To-Us Submission</h2>
+      <h3>Customer Info</h3>
+      <ul>
+        <li><strong>Name:</strong> ${customer_name || ''}</li>
+        <li><strong>Phone:</strong> ${customer_phone || ''}</li>
+        <li><strong>Email:</strong> ${customer_email || ''}</li>
+        <li><strong>Instagram:</strong> ${customer_instagram || ''}</li>
+        <li><strong>Payment Methods:</strong> ${payment_methods || ''}</li>
+      </ul>
+
+      <h3>Pairs</h3>
+      <table border="1" cellspacing="0" cellpadding="4">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Brand/Model</th>
+            <th>Size US</th>
+            <th>Condition</th>
+            <th>Desired Price</th>
+            <th>Box?</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${pairsHtml || '<tr><td colspan="7">No pairs parsed</td></tr>'}
+        </tbody>
+      </table>
+    `;
+
+    const textBody = `
+New Sell-To-Us Submission
+
+Customer:
+- Name: ${customer_name || ''}
+- Phone: ${customer_phone || ''}
+- Email: ${customer_email || ''}
+- Instagram: ${customer_instagram || ''}
+- Payment methods: ${payment_methods || ''}
+
+Pairs:
+${pairs
+  .map(
+    (p) =>
+      `#${p.index || ''} - ${p.brand_model || ''}, Size ${p.size_us || ''}, Condition: ${
+        p.condition || ''
+      }, Price: ${p.desired_price || ''}, Box: ${p.has_box || ''}, Notes: ${p.notes || ''}`
+  )
+  .join('\n')}
+    `;
+
+    // Attach photos if any
+    const attachments =
+      Array.isArray(req.files) && req.files.length > 0
+        ? req.files.map((file, i) => ({
+            filename: file.originalname || `photo-${i + 1}.jpg`,
+            content: file.buffer,
+          }))
+        : [];
+
+    // Send email to store
+    if (transporter) {
+      try {
+        await transporter.sendMail({
+          from: `"96Kickz Sell To Us" <${fromEmail}>`,
+          to: toEmail,
+          subject: `New Sell-To-Us form from ${customer_name || 'Customer'}`,
+          text: textBody,
+          html: htmlBody,
+          attachments,
+        });
+        console.log('✅ Email sent to store:', toEmail);
+      } catch (emailErr) {
+        console.error('❌ Failed to send email:', emailErr);
+      }
+
+      // Optional: confirmation email to customer
+      if (customer_email) {
+        try {
+          await transporter.sendMail({
+            from: `"96Kickz" <${fromEmail}>`,
+            to: customer_email,
+            subject: 'We received your Sell-To-Us submission',
+            text:
+              'Thanks for submitting your pairs to 96Kickz. Our team will review your info and get back to you.',
+          });
+          console.log('✅ Confirmation email sent to customer:', customer_email);
+        } catch (confirmErr) {
+          console.error('❌ Failed to send confirmation email:', confirmErr);
+        }
+      }
+    } else {
+      console.warn('⚠️ Transporter not configured, skipping email send.');
+    }
+
+    // Response back to frontend
     return res.json({
       success: true,
       message: 'Form received by backend.',
@@ -90,7 +223,7 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
   }
 });
 
-// 7) Start server
+// 8) Start server
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, () => {
   console.log(`🚀 Server listening on port ${PORT}`);

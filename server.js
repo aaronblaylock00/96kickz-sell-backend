@@ -35,14 +35,26 @@ if (
   transporter = nodemailer.createTransport({
     host: process.env.SMTP_HOST,
     port: Number(process.env.SMTP_PORT),
-    secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for 587/25 etc
+    secure: Number(process.env.SMTP_PORT) === 465, // true for 465, false for 587 etc
     auth: {
       user: process.env.SMTP_USER,
       pass: process.env.SMTP_PASS,
     },
   });
+
+  // Verify SMTP on startup so errors show in logs
+  transporter.verify((err, success) => {
+    if (err) {
+      console.error('❌ SMTP verify failed:', err);
+    } else {
+      console.log('✅ SMTP server is ready to take our messages');
+    }
+  });
 } else {
-  console.warn('⚠️ SMTP env vars not fully set. Emails will NOT be sent.');
+  console.warn(
+    '⚠️ SMTP env vars not fully set. Emails will NOT be sent. ' +
+      'Expected SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.'
+  );
 }
 
 // 6) Test route
@@ -65,7 +77,10 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
     } = req.body;
 
     console.log('REQ BODY:', req.body);
-    console.log('FILES COUNT:', Array.isArray(req.files) ? req.files.length : 0);
+    console.log(
+      'FILES COUNT:',
+      Array.isArray(req.files) ? req.files.length : 0
+    );
 
     customer_name = (customer_name || '').toString().trim();
     customer_phone = (customer_phone || '').toString().trim();
@@ -84,11 +99,26 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
 
     console.log('Parsed pairs:', pairs);
 
-    // Build email body
-    const toEmail = process.env.TO_EMAIL || 'buys@96kickz.com';
-    const fromEmail =
-      process.env.FROM_EMAIL || process.env.SMTP_USER || 'no-reply@96kickz.com';
+    // Email config (matches your Render env vars)
+    const toEmail =
+      process.env.STORE_EMAIL || // you already have this set
+      process.env.TO_EMAIL ||
+      'buys@96kickz.com';
 
+    const fromEmail =
+      process.env.FROM_EMAIL ||
+      process.env.SMTP_USER ||
+      'no-reply@96kickz.com';
+
+    console.log('📧 Email config:', {
+      host: process.env.SMTP_HOST,
+      port: process.env.SMTP_PORT,
+      user: process.env.SMTP_USER,
+      toEmail,
+      fromEmail,
+    });
+
+    // Build HTML table for pairs
     const pairsHtml = pairs
       .map(
         (p) => `
@@ -149,9 +179,11 @@ Pairs:
 ${pairs
   .map(
     (p) =>
-      `#${p.index || ''} - ${p.brand_model || ''}, Size ${p.size_us || ''}, Condition: ${
-        p.condition || ''
-      }, Price: ${p.desired_price || ''}, Box: ${p.has_box || ''}, Notes: ${p.notes || ''}`
+      `#${p.index || ''} - ${p.brand_model || ''}, Size ${
+        p.size_us || ''
+      }, Condition: ${p.condition || ''}, Price: ${
+        p.desired_price || ''
+      }, Box: ${p.has_box || ''}, Notes: ${p.notes || ''}`
   )
   .join('\n')}
     `;
@@ -165,33 +197,47 @@ ${pairs
           }))
         : [];
 
-    // Send email to store
+    if (attachments.length) {
+      console.log(
+        '📎 Preparing attachments:',
+        attachments.map((a) => a.filename)
+      );
+    }
+
+    // Send email(s)
     if (transporter) {
       try {
-        await transporter.sendMail({
+        const info = await transporter.sendMail({
           from: `"96Kickz Sell To Us" <${fromEmail}>`,
           to: toEmail,
-          subject: `New Sell-To-Us form from ${customer_name || 'Customer'}`,
+          subject: `New Sell-To-Us form from ${
+            customer_name || 'Customer'
+          }`,
           text: textBody,
           html: htmlBody,
           attachments,
         });
-        console.log('✅ Email sent to store:', toEmail);
+        console.log('✅ Email sent to store:', toEmail, 'MessageID:', info.messageId);
       } catch (emailErr) {
-        console.error('❌ Failed to send email:', emailErr);
+        console.error('❌ Failed to send email to store:', emailErr);
       }
 
       // Optional: confirmation email to customer
       if (customer_email) {
         try {
-          await transporter.sendMail({
+          const confirmInfo = await transporter.sendMail({
             from: `"96Kickz" <${fromEmail}>`,
             to: customer_email,
             subject: 'We received your Sell-To-Us submission',
             text:
               'Thanks for submitting your pairs to 96Kickz. Our team will review your info and get back to you.',
           });
-          console.log('✅ Confirmation email sent to customer:', customer_email);
+          console.log(
+            '✅ Confirmation email sent to customer:',
+            customer_email,
+            'MessageID:',
+            confirmInfo.messageId
+          );
         } catch (confirmErr) {
           console.error('❌ Failed to send confirmation email:', confirmErr);
         }

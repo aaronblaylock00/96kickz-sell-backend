@@ -19,7 +19,7 @@ const upload = multer({
   storage: multer.memoryStorage(), // keep files in memory (for emailing)
   limits: {
     fileSize: 10 * 1024 * 1024, // 10 MB per file
-    files: 10,                  // max 10 images
+    files: 10, // max 10 images
   },
 });
 
@@ -53,7 +53,7 @@ if (
 } else {
   console.warn(
     '⚠️ SMTP env vars not fully set. Emails will NOT be sent. ' +
-      'Expected SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.'
+      'Expected SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS.',
   );
 }
 
@@ -74,12 +74,15 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
       customer_instagram,
       payment_methods,
       pairs_json,
+      // NEW FIELDS
+      customer_location,
+      dropoff_method,
     } = req.body;
 
     console.log('REQ BODY:', req.body);
     console.log(
       'FILES COUNT:',
-      Array.isArray(req.files) ? req.files.length : 0
+      Array.isArray(req.files) ? req.files.length : 0,
     );
 
     customer_name = (customer_name || '').toString().trim();
@@ -87,6 +90,9 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
     customer_email = (customer_email || '').toString().trim();
     customer_instagram = (customer_instagram || '').toString().trim();
     payment_methods = (payment_methods || '').toString().trim();
+    // NEW NORMALIZATION
+    customer_location = (customer_location || '').toString().trim();
+    dropoff_method = (dropoff_method || '').toString().trim();
 
     let pairs = [];
     try {
@@ -131,7 +137,7 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
             <td>${p.has_box || ''}</td>
             <td>${p.notes || ''}</td>
           </tr>
-        `
+        `,
       )
       .join('');
 
@@ -143,6 +149,8 @@ app.post('/api/submit', upload.array('photos'), async (req, res) => {
         <li><strong>Phone:</strong> ${customer_phone || ''}</li>
         <li><strong>Email:</strong> ${customer_email || ''}</li>
         <li><strong>Instagram:</strong> ${customer_instagram || ''}</li>
+        <li><strong>Location:</strong> ${customer_location || ''}</li>
+        <li><strong>How they'll get them to us:</strong> ${dropoff_method || ''}</li>
         <li><strong>Payment Methods:</strong> ${payment_methods || ''}</li>
       </ul>
 
@@ -173,6 +181,8 @@ Customer:
 - Phone: ${customer_phone || ''}
 - Email: ${customer_email || ''}
 - Instagram: ${customer_instagram || ''}
+- Location: ${customer_location || ''}
+- How they'll get them to us: ${dropoff_method || ''}
 - Payment methods: ${payment_methods || ''}
 
 Pairs:
@@ -183,7 +193,7 @@ ${pairs
         p.size_us || ''
       }, Condition: ${p.condition || ''}, Price: ${
         p.desired_price || ''
-      }, Box: ${p.has_box || ''}, Notes: ${p.notes || ''}`
+      }, Box: ${p.has_box || ''}, Notes: ${p.notes || ''}`,
   )
   .join('\n')}
     `;
@@ -200,7 +210,7 @@ ${pairs
     if (attachments.length) {
       console.log(
         '📎 Preparing attachments:',
-        attachments.map((a) => a.filename)
+        attachments.map((a) => a.filename),
       );
     }
 
@@ -210,14 +220,17 @@ ${pairs
         const info = await transporter.sendMail({
           from: `"96Kickz Sell To Us" <${fromEmail}>`,
           to: toEmail,
-          subject: `New Sell-To-Us form from ${
-            customer_name || 'Customer'
-          }`,
+          subject: `New Sell-To-Us form from ${customer_name || 'Customer'}`,
           text: textBody,
           html: htmlBody,
           attachments,
         });
-        console.log('✅ Email sent to store:', toEmail, 'MessageID:', info.messageId);
+        console.log(
+          '✅ Email sent to store:',
+          toEmail,
+          'MessageID:',
+          info.messageId,
+        );
       } catch (emailErr) {
         console.error('❌ Failed to send email to store:', emailErr);
       }
@@ -236,10 +249,13 @@ ${pairs
             '✅ Confirmation email sent to customer:',
             customer_email,
             'MessageID:',
-            confirmInfo.messageId
+            confirmInfo.messageId,
           );
         } catch (confirmErr) {
-          console.error('❌ Failed to send confirmation email:', confirmErr);
+          console.error(
+            '❌ Failed to send confirmation email:',
+            confirmErr,
+          );
         }
       }
     } else {
@@ -255,6 +271,8 @@ ${pairs
         customer_phone,
         customer_email,
         customer_instagram,
+        customer_location,
+        dropoff_method,
         payment_methods,
         pairs_count: pairs.length,
         files_count: Array.isArray(req.files) ? req.files.length : 0,
